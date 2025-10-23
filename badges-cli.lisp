@@ -19,19 +19,75 @@
 
 (defun print-usage ()
   (format t "Usage:~%" )
-  (format t "  ./badges-cli.lisp sign <input.png> <output.png> <private.key>~%")
+  (format t "  ./badges-cli.lisp sign [options] <input.png> <output.png> <private.key>~%")
   (format t "  ./badges-cli.lisp verify <input.png> <public.key>~%")
   (format t "  ./badges-cli.lisp keygen <private.key> <public.key>~%")
-  (format t "~%Options:~%  -h, --help   Show this message~%"))
+  (format t "~%Sign options:~%")
+  (format t "  --subject <name>      Beneficiary or subject being attested~%")
+  (format t "  --issuer <name>       Entity issuing the attestation~%")
+  (format t "  --purpose <text>      Purpose or reason for the signature~%")
+  (format t "  --note <text>         Additional free-form note~%")
+  (format t "  --issued-at <iso8601> Override the generated timestamp~%")
+  (format t "  --meta key=value      Add custom metadata (repeatable)~%")
+  (format t "~%General options:~%  -h, --help   Show this message~%"))
+
+(defun parse-sign-arguments (args)
+  "Split ARGS into positional parameters and a metadata plist."
+  (let ((metadata '())
+        (positionals '())
+        (error-message nil))
+    (labels ((consume-value (option)
+               (if args
+                   (pop args)
+                   (progn
+                     (setf error-message (format nil "~A expects a value" option))
+                     nil)))
+             (set-meta (key value)
+               (when value
+                 (setf (getf metadata key) value))))
+      (loop while args and (null error-message) do
+            (let ((arg (pop args)))
+              (cond
+                ((string= arg "--subject")
+                 (set-meta :subject (consume-value arg)))
+                ((string= arg "--issuer")
+                 (set-meta :issuer (consume-value arg)))
+                ((string= arg "--purpose")
+                 (set-meta :purpose (consume-value arg)))
+                ((string= arg "--note")
+                 (set-meta :note (consume-value arg)))
+                ((string= arg "--issued-at")
+                 (set-meta :issued-at (consume-value arg)))
+                ((string= arg "--meta")
+                 (let ((kv (consume-value arg)))
+                   (when kv
+                     (let ((sep (position #\= kv)))
+                       (if sep
+                           (let* ((raw-key (subseq kv 0 sep))
+                                  (raw-val (subseq kv (1+ sep)))
+                                  (keyword (intern (string-upcase raw-key) :keyword)))
+                             (set-meta keyword raw-val))
+                           (setf error-message "--meta expects KEY=VALUE"))))))
+                ((and (> (length arg) 2) (string= (subseq arg 0 2) "--"))
+                 (setf error-message (format nil "Unknown option: ~A" arg)))
+                (t
+                 (push arg positionals)))))
+    (values (nreverse positionals) metadata error-message)))
 
 (defun handle-sign (args)
-  (if (/= (length args) 3)
-      (progn
-        (format *error-output* "sign expects <input.png> <output.png> <private.key>~%")
-        1)
-      (destructuring-bind (input output private-key) args
-        (badges:sign-image input output private-key)
-        0)))
+  (multiple-value-bind (positionals metadata error-message)
+      (parse-sign-arguments args)
+    (cond
+      (error-message
+       (format *error-output* "~A~%" error-message)
+       1)
+      ((/= (length positionals) 3)
+       (format *error-output* "sign expects <input.png> <output.png> <private.key>~%")
+       1)
+      (t
+       (destructuring-bind (input output private-key) positionals
+         (badges:sign-image input output private-key :metadata metadata)
+         0)))))
 
 (defun handle-verify (args)
   (if (/= (length args) 2)

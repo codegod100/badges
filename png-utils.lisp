@@ -129,20 +129,104 @@
          (babel:octets-to-string (subseq data 0 null-pos) :encoding :latin1)
          (babel:octets-to-string (subseq data (1+ null-pos)) :encoding :latin1))))))
 
+(defun %sanitize-metadata-value (value)
+  "Return VALUE as a single-line string suitable for payload encoding."
+  (let* ((raw (princ-to-string value))
+         (sanitized
+           (with-output-to-string (out)
+             (loop for ch across raw do
+                   (cond
+                     ((or (char= ch #\Newline) (char= ch #\Return)) (write-char #\Space out))
+                     ((char= ch #\Tab) (write-char #\Space out))
+                     (t (write-char ch out)))))))
+    (string-trim " " sanitized)))
+
+(defun %plist-to-metadata-pairs (metadata)
+  "Convert a plist METADATA to an alist of lowercase string keys and string values."
+  (let ((pairs '()))
+    (loop for (key value) on metadata by #'cddr do
+          (when value
+            (let* ((key-str (cond
+                              ((stringp key) (string-downcase key))
+                              ((symbolp key) (string-downcase (string key)))
+                              (t (string-downcase (princ-to-string key)))))
+                   (val-str (%sanitize-metadata-value value)))
+              (push (cons key-str val-str) pairs))))
+    (nreverse pairs)))
+
+(defun %current-iso8601-timestamp ()
+  "Return the current UTC time formatted as an ISO-8601 string."
+  (multiple-value-bind (sec min hour day month year)
+      (decode-universal-time (get-universal-time) 0)
+    (format nil "~4,'0d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
+            year month day hour min sec)))
+
+(defun make-signature-payload (signature metadata)
+  "Encode SIGNATURE and METADATA plist into a payload string.
+Returns two values: the payload string and the normalized metadata alist
+ (including version, issued_at, etc.)."
+  (let* ((pairs (%plist-to-metadata-pairs metadata))
+    (issued-pair (or (assoc "issued_at" pairs :test #'string=)
+           (assoc "issued-at" pairs :test #'string=)))
+         (issued-at (if issued-pair
+                        (cdr issued-pair)
+                        (%current-iso8601-timestamp)))
+         (filtered (remove-if (lambda (pair)
+            (member (car pair) '("signature" "version" "issued_at" "issued-at")
+                                        :test #'string=))
+                              pairs))
+         (ordered (append (list (cons "version" "1")
+                                (cons "signature" signature)
+                                (cons "issued_at" issued-at))
+                          filtered)))
+    (values
+     (with-output-to-string (out)
+       (dolist (pair ordered)
+         (format out "~A=~A~%" (car pair) (cdr pair))))
+     ordered)))
+
+(defun parse-signature-payload (payload)
+  "Parse PAYLOAD text into signature and metadata alist.
+Returns three values: signature hex string, metadata alist, and the raw payload text."
+  (let ((lines (uiop:split-string payload :separator '(#\Newline #\Return)))
+        (pairs '()))
+    (dolist (raw lines)
+      (let ((line (string-trim '(#\Space #\Tab) raw)))
+        (unless (zerop (length line))
+          (let ((sep (position #\= line)))
+            (if sep
+                (let ((key (string-downcase (string-trim '(#\Space #\Tab)
+                                                         (subseq line 0 sep))))
+                      (val (string-trim '(#\Space #\Tab)
+                                        (subseq line (1+ sep)))))
+                  (push (cons key val) pairs))
+                (push (cons (string-downcase line) "") pairs))))))
+    (let* ((ordered (nreverse pairs))
+           (signature-pair (assoc "signature" ordered :test #'string=)))
+      (unless signature-pair
+        (error "Signature payload missing SIGNATURE field"))
+      (let ((metadata (remove-if (lambda (pair)
+                                   (string= (car pair) "signature"))
+                                 ordered)))
+        (values (cdr signature-pair) metadata payload)))))
+
 (defun extract-signature (chunks)
-  "Extract signature from PNG chunks (looks for 'Signature' tEXt chunk)"
+  "Extract signature payload from PNG chunks.
+Returns up to three values: signature hex, metadata alist, raw payload text."
   (dolist (chunk chunks)
     (when (string= (png-chunk-type chunk) "tEXt")
       (multiple-value-bind (keyword text)
           (parse-text-chunk chunk)
         (when (string= keyword "Signature")
-          (return-from extract-signature text)))))
-  nil)
+          (multiple-value-bind (signature metadata raw)
+              (parse-signature-payload text)
+            (return-from extract-signature (values signature metadata raw)))))))
+  (values nil nil nil))
 
-(defun embed-signature (chunks signature)
-  "Embed signature into PNG chunks (before IEND)"
+(defun embed-signature (chunks payload)
+  "Embed PAYLOAD string into a Signature tEXt chunk before IEND."
   (let ((result '())
-        (sig-chunk (make-text-chunk "Signature" signature)))
+        (sig-chunk (make-text-chunk "Signature" payload)))
     ;; Copy all chunks except IEND
     (dolist (chunk chunks)
       (unless (string= (png-chunk-type chunk) "IEND")

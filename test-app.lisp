@@ -38,16 +38,18 @@
     (format t "Step 3: Extracting Signature from rabbit-signed.png~%")
     (format t "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━~%")
     
-    (let* ((signed-chunks (read-png-chunks "rabbit-signed.png"))
-           (extracted-sig (extract-signature signed-chunks)))
-      
-      (if extracted-sig
-          (progn
-            (format t "✓ Signature extracted successfully!~%")
-            (format t "Signature (first 64 chars): ~A...~%" 
-                    (subseq extracted-sig 0 (min 64 (length extracted-sig))))
-            (format t "Signature length: ~A characters~%" (length extracted-sig)))
-          (format t "✗ No signature found!~%"))
+    (let* ((signed-chunks (read-png-chunks "rabbit-signed.png")))
+      (multiple-value-bind (extracted-sig metadata raw)
+          (extract-signature signed-chunks)
+        (declare (ignore raw))
+        (if extracted-sig
+            (progn
+              (format t "✓ Signature extracted successfully!~%")
+              (format t "Signature (first 64 chars): ~A...~%"
+                      (subseq extracted-sig 0 (min 64 (length extracted-sig))))
+              (format t "Signature length: ~A characters~%" (length extracted-sig))
+              (%print-attestation metadata))
+            (format t "✗ No signature found!~%"))))
       
       ;; Step 4: Verify with correct key
       (format t "~%━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━~%")
@@ -82,14 +84,18 @@
         ;; Remove signature and add a fake one
         (setf tampered-chunks 
               (remove-if (lambda (chunk)
-                          (and (string= (png-chunk-type chunk) "tEXt")
-                               (multiple-value-bind (keyword text)
-                                   (parse-text-chunk chunk)
-                                 (string= keyword "Signature"))))
+                           (and (string= (png-chunk-type chunk) "tEXt")
+                                (multiple-value-bind (keyword text)
+                                    (parse-text-chunk chunk)
+                                  (string= keyword "Signature"))))
                         tampered-chunks))
         ;; Add fake signature
-        (setf tampered-chunks 
-              (embed-signature tampered-chunks "FAKE_SIGNATURE_1234567890ABCDEF"))
+        (multiple-value-bind (payload meta)
+            (make-signature-payload "FAKE_SIGNATURE_1234567890ABCDEF"
+                                     (list :subject "Mallory" :note "Tampered"))
+          (declare (ignore meta))
+          (setf tampered-chunks 
+                (embed-signature tampered-chunks payload)))
         
         (write-png-chunks "rabbit-tampered.png" tampered-chunks)
         (format t "Created tampered image with fake signature...~%")
@@ -112,7 +118,7 @@
       (format t "  1. Share rabbit-signed.png and rabbit-public.key with others~%")
       (format t "  2. They can verify: (badges:verify-image \"rabbit-signed.png\" \"rabbit-public.key\")~%")
       (format t "  3. Any modification to the image will invalidate the signature!~%")
-      (format t "~%"))))
+  (format t "~%")))
 
 ;; Simple helper to check if an image has a signature
 (defun check-signature-status (filepath)
