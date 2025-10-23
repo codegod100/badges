@@ -45,11 +45,17 @@
               do (setf (aref result i) (elt sequence i)))
         result)))
 
+(defun %bytes-to-u32 (bytes)
+  "Convert a 4-byte vector to a 32-bit unsigned integer."
+  (let ((value 0))
+    (loop for byte across bytes do (setf value (logior (ash value 8) byte)))
+    value))
+
 (defun calculate-crc (type-and-data)
   "Calculate CRC32 for PNG chunk (type + data)"
-  (let ((bytes (%ensure-octet-vector type-and-data)))
-    (let ((digest (ironclad:digest-sequence :crc32 bytes)))
-      (ironclad:octets-to-integer digest :endianness :big))))
+  (let* ((bytes (%ensure-octet-vector type-and-data))
+         (digest (ironclad:digest-sequence :crc32 bytes)))
+    (%bytes-to-u32 digest)))
 
 (defun read-png-chunks (filepath)
   "Read all chunks from a PNG file"
@@ -66,10 +72,10 @@
           for length = (read-u32 stream)
           for type-bytes = (read-bytes stream 4)
           for type = (babel:octets-to-string type-bytes :encoding :latin1)
-          for data = (read-bytes stream length)
-    for crc = (read-u32 stream)
+    for data = (read-bytes stream length)
     do (progn
-      (declare (ignore crc))
+      ;; Consume CRC (currently unchecked)
+      (read-u32 stream)
       ;; TODO: Re-enable CRC verification once implementation matches PNG reference
       ;; (let* ((type-and-data (concatenate 'vector type-bytes data))
       ;;        (calculated-crc (calculate-crc type-and-data)))
