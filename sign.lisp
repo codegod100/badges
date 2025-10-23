@@ -18,6 +18,8 @@
       (setf (getf plist :issued-at) issued))
     ;; Always embed the image hash
     (setf (getf plist :image-hash) image-hash)
+    ;; Record that metadata is bound to the signature payload
+    (setf (getf plist :scope) "image+metadata")
     plist))
 
 (defun %print-attestation (metadata-alist)
@@ -27,7 +29,7 @@
     (dolist (pair metadata-alist)
       (let ((key (car pair))
             (value (cdr pair)))
-        (unless (member key '("version" "signature") :test #'string=)
+  (unless (member key '("version" "signature" "scope") :test #'string=)
           (let* ((label (substitute #\Space #\_ key))
                  (label (substitute #\Space #\- label))
                  (pretty (string-capitalize label)))
@@ -44,12 +46,24 @@
     (format t "Image data size: ~A bytes~%" (length image-data))
     (format t "Image hash: ~A~%" (subseq image-hash 0 16))
     
-    ;; Sign the image data
+  ;; Sign the combined image bytes and canonical metadata representation
     (format t "Signing image...~%")
-    (let* ((signature (sign-data image-data private-key))
-           (normalized-metadata (%normalize-signature-metadata metadata image-hash))
+    (let* ((normalized-metadata (%normalize-signature-metadata metadata image-hash))
+           (base-pairs (%plist-to-metadata-pairs normalized-metadata))
+           (filtered-pairs (remove-if (lambda (pair)
+                                        (member (car pair) '("signature" "version")
+                                                :test #'string=))
+                                      base-pairs))
+           (sorted-pairs (stable-sort (copy-list filtered-pairs)
+                                      #'string< :key #'car))
+           (metadata-pairs (cons (cons "version" "2") sorted-pairs))
+           (metadata-string (serialize-metadata-pairs metadata-pairs))
+           (metadata-octets (babel:string-to-octets metadata-string :encoding :utf-8))
+           (message (concatenate '(simple-array (unsigned-byte 8) (*))
+                                 image-data #(10) metadata-octets))
+           (signature (sign-data message private-key))
            (payload (multiple-value-bind (payload metadata-alist)
-                        (make-signature-payload signature normalized-metadata)
+                        (make-signature-payload signature metadata-pairs)
                       (%print-attestation metadata-alist)
                       payload)))
       (let ((preview (subseq signature 0 (min 32 (length signature)))))

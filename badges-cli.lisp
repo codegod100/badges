@@ -45,7 +45,7 @@
              (set-meta (key value)
                (when value
                  (setf (getf metadata key) value))))
-  (loop while args while (null error-message)
+      (loop while args while (null error-message)
             for arg = (pop args)
             do (cond
                  ((string= arg "--subject")

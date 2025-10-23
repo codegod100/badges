@@ -154,6 +154,12 @@
               (push (cons key-str val-str) pairs))))
     (nreverse pairs)))
 
+(defun serialize-metadata-pairs (pairs)
+  "Render PAIRS (alist) as newline-delimited key=value lines."
+  (with-output-to-string (out)
+    (dolist (pair pairs)
+      (format out "~A=~A~%" (car pair) (cdr pair)))))
+
 (defun %current-iso8601-timestamp ()
   "Return the current UTC time formatted as an ISO-8601 string."
   (multiple-value-bind (sec min hour day month year)
@@ -161,29 +167,13 @@
     (format nil "~4,'0d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
             year month day hour min sec)))
 
-(defun make-signature-payload (signature metadata)
-  "Encode SIGNATURE and METADATA plist into a payload string.
-Returns two values: the payload string and the normalized metadata alist
- (including version, issued_at, etc.)."
-  (let* ((pairs (%plist-to-metadata-pairs metadata))
-    (issued-pair (or (assoc "issued_at" pairs :test #'string=)
-           (assoc "issued-at" pairs :test #'string=)))
-         (issued-at (if issued-pair
-                        (cdr issued-pair)
-                        (%current-iso8601-timestamp)))
-         (filtered (remove-if (lambda (pair)
-            (member (car pair) '("signature" "version" "issued_at" "issued-at")
-                                        :test #'string=))
-                              pairs))
-         (ordered (append (list (cons "version" "1")
-                                (cons "signature" signature)
-                                (cons "issued_at" issued-at))
-                          filtered)))
-    (values
-     (with-output-to-string (out)
-       (dolist (pair ordered)
-         (format out "~A=~A~%" (car pair) (cdr pair))))
-     ordered)))
+(defun make-signature-payload (signature metadata-pairs)
+  "Produce the final payload string from SIGNATURE and METADATA-PAIRS.
+Returns two values: the payload string and METADATA-PAIRS (for caller reuse)."
+  (values (concatenate 'string
+                       (format nil "signature=~A~%" signature)
+                       (serialize-metadata-pairs metadata-pairs))
+          metadata-pairs))
 
 (defun parse-signature-payload (payload)
   "Parse PAYLOAD text into signature and metadata alist.

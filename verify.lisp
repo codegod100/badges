@@ -22,7 +22,14 @@
              (public-key (load-public-key public-key-file))
              (image-hash (hash-data image-data))
              (metadata-hash (or (cdr (assoc "image_hash" metadata :test #'string=))
-                                (cdr (assoc "image-hash" metadata :test #'string=)))))
+                                (cdr (assoc "image-hash" metadata :test #'string=))))
+             (scope (cdr (assoc "scope" metadata :test #'string=)))
+             (metadata-string (serialize-metadata-pairs metadata))
+             (metadata-octets (babel:string-to-octets metadata-string :encoding :utf-8))
+             (message (if (string= scope "image+metadata")
+                          (concatenate '(simple-array (unsigned-byte 8) (*))
+                                       image-data #(10) metadata-octets)
+                          image-data)))
         
         (format t "Image data size: ~A bytes~%" (length image-data))
         (format t "Image hash: ~A~%" (subseq image-hash 0 16))
@@ -34,7 +41,7 @@
         
         ;; Verify signature
         (format t "Verifying signature...~%")
-        (if (verify-signature image-data signature public-key)
+        (if (verify-signature message signature public-key)
             (progn
               (format t "✓ Signature is VALID!~%")
               t)

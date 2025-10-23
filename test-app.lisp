@@ -92,7 +92,10 @@
         ;; Add fake signature
         (multiple-value-bind (payload meta)
             (make-signature-payload "FAKE_SIGNATURE_1234567890ABCDEF"
-                                     (list :subject "Mallory" :note "Tampered"))
+                                     '(("version" . "2")
+                                       ("scope" . "image+metadata")
+                                       ("subject" . "Mallory")
+                                       ("note" . "Tampered")))
           (declare (ignore meta))
           (setf tampered-chunks 
                 (embed-signature tampered-chunks payload)))
