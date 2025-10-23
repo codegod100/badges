@@ -11,7 +11,7 @@
 
 ;; Ensure ASDF can locate the current project
 (let* ((script-path (or *load-truename* *compile-file-pathname*))
-  (script-dir (and script-path (uiop:pathname-directory-pathname script-path))))
+       (script-dir (and script-path (uiop:pathname-directory-pathname script-path))))
   (when script-dir
     (pushnew script-dir asdf:*central-registry* :test #'equal)))
 
@@ -45,34 +45,35 @@
              (set-meta (key value)
                (when value
                  (setf (getf metadata key) value))))
-      (loop while args and (null error-message) do
-            (let ((arg (pop args)))
-              (cond
-                ((string= arg "--subject")
-                 (set-meta :subject (consume-value arg)))
-                ((string= arg "--issuer")
-                 (set-meta :issuer (consume-value arg)))
-                ((string= arg "--purpose")
-                 (set-meta :purpose (consume-value arg)))
-                ((string= arg "--note")
-                 (set-meta :note (consume-value arg)))
-                ((string= arg "--issued-at")
-                 (set-meta :issued-at (consume-value arg)))
-                ((string= arg "--meta")
-                 (let ((kv (consume-value arg)))
-                   (when kv
-                     (let ((sep (position #\= kv)))
-                       (if sep
-                           (let* ((raw-key (subseq kv 0 sep))
-                                  (raw-val (subseq kv (1+ sep)))
-                                  (keyword (intern (string-upcase raw-key) :keyword)))
-                             (set-meta keyword raw-val))
-                           (setf error-message "--meta expects KEY=VALUE"))))))
-                ((and (> (length arg) 2) (string= (subseq arg 0 2) "--"))
-                 (setf error-message (format nil "Unknown option: ~A" arg)))
-                (t
-                 (push arg positionals)))))
-    (values (nreverse positionals) metadata error-message)))
+  (loop while args while (null error-message)
+            for arg = (pop args)
+            do (cond
+                 ((string= arg "--subject")
+                  (set-meta :subject (consume-value arg)))
+                 ((string= arg "--issuer")
+                  (set-meta :issuer (consume-value arg)))
+                 ((string= arg "--purpose")
+                  (set-meta :purpose (consume-value arg)))
+                 ((string= arg "--note")
+                  (set-meta :note (consume-value arg)))
+                 ((string= arg "--issued-at")
+                  (set-meta :issued-at (consume-value arg)))
+                 ((string= arg "--meta")
+                  (let ((kv (consume-value arg)))
+                    (when kv
+                      (let ((sep (position #\= kv)))
+                        (if sep
+                            (let* ((raw-key (subseq kv 0 sep))
+                                   (raw-val (subseq kv (1+ sep)))
+                                   (keyword (intern (string-upcase raw-key) :keyword)))
+                              (set-meta keyword raw-val))
+                            (setf error-message "--meta expects KEY=VALUE"))))))
+                 ((and (> (length arg) 2)
+                       (string= (subseq arg 0 2) "--"))
+                  (setf error-message (format nil "Unknown option: ~A" arg)))
+                 (t
+                  (push arg positionals))))
+      (values (nreverse positionals) metadata error-message))))
 
 (defun handle-sign (args)
   (multiple-value-bind (positionals metadata error-message)
