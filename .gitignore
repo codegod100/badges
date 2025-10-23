@@ -19,6 +19,7 @@ secret.*
 # Test files
 test-images/
 *.png
+!rabbit.png
 
 # Editor files
 *~
